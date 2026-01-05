@@ -85,12 +85,6 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-/* ===================== REPORTS: CREATE ===================== */
-function calcDowntimeHours(start, end) {
-  if (!start || !end) return null;
-  const ms = new Date(end) - new Date(start);
-  return Math.round((ms / 36e5) * 100) / 100;
-}
 
 app.post("/api/reports", authRequired, async (req, res) => {
   try {
