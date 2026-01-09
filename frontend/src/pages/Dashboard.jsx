@@ -39,6 +39,19 @@ const REFRESH_INTERVAL_MINUTES = 5;
 const REFRESH_MS = REFRESH_INTERVAL_MINUTES * 60 * 1000;
 
 const PIE_COLORS = ["#2e7d32", "#d32f2f", "#f9a825"];
+const STATUS_COLORS = {
+  UP: "#2e7d32",
+  PARKED: "#f9a825"
+};
+
+const FAULT_COLORS = {
+  LOST_COMM: "#d32f2f",
+  CASH_OUT: "#f57c00",
+  HARD_FAULT: "#6a1b9a",
+  IN_REPLENISHMENT: "#0288d1",
+  APP_OUT_OF_SERVICE: "#455a64",
+  SWITCH_LOST_COMM: "#c2185b"
+};
 
 /* =========================
    UTILS
@@ -224,14 +237,44 @@ export default function Dashboard() {
   /* =========================
      CHART DATA
   ========================= */
-  const pieData = useMemo(
-    () => [
-      { name: "UP", value: safeNum(atmStatus.UP) },
-      { name: "DOWN", value: safeNum(atmStatus.DOWN) },
-      { name: "PARKED", value: safeNum(atmStatus.PARKED) }
-    ],
-    [atmStatus]
-  );
+const pieData = useMemo(() => {
+  const data = [];
+
+  // 🟢 UP
+  if (safeNum(atmStatus.UP) > 0) {
+    data.push({
+      name: "UP",
+      value: safeNum(atmStatus.UP),
+      color: STATUS_COLORS.UP
+    });
+  }
+
+  // 🟡 PARKED
+  if (safeNum(atmStatus.PARKED) > 0) {
+    data.push({
+      name: "PARKED",
+      value: safeNum(atmStatus.PARKED),
+      color: STATUS_COLORS.PARKED
+    });
+  }
+
+  // 🔴 DOWN → split into faults
+  if (faults) {
+    Object.entries(faults).forEach(([fault, count]) => {
+      const v = safeNum(count);
+      if (v > 0) {
+        data.push({
+          name: fault.replace(/_/g, " "),
+          value: v,
+          color: FAULT_COLORS[fault] || "#9e9e9e"
+        });
+      }
+    });
+  }
+
+  return data;
+}, [atmStatus, faults]);
+
 
   const barData = useMemo(() => {
     const keys = Object.keys(faults || {});
@@ -547,11 +590,11 @@ export default function Dashboard() {
               </Typography>
               <ResponsiveContainer>
                 <PieChart>
-                  <Pie data={pieData} dataKey="value" label>
-                    {pieData.map((_, i) => (
-                      <Cell key={i} fill={PIE_COLORS[i]} />
-                    ))}
-                  </Pie>
+<Pie data={pieData} dataKey="value" nameKey="name" label>
+  {pieData.map((entry, i) => (
+    <Cell key={i} fill={entry.color} />
+  ))}
+</Pie>
                   <Tooltip />
                 </PieChart>
               </ResponsiveContainer>
