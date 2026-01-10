@@ -9,66 +9,132 @@ import {
   TableBody,
   Paper,
   Button,
-  Stack
+  Stack,
+  Checkbox,
+  TextField,
+  Chip
 } from "@mui/material";
 import api from "../api";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
+/* =====================================================
+   COMPONENT
+===================================================== */
 export default function DailyReport() {
   const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [exporting, setExporting] = useState(false);
+  const [selectedRows, setSelectedRows] = useState([]); // ARRAY (no collision)
+  const [actions, setActions] = useState({});
+  const [contacts, setContacts] = useState({});
+  const [supervisor, setSupervisor] = useState("");
+  const [supervisorComment, setSupervisorComment] = useState("");
+  const [approved, setApproved] = useState(false);
 
-  /* =====================================================
-     LOAD REPORTS
-  ===================================================== */
   useEffect(() => {
     loadReports();
   }, []);
 
   async function loadReports() {
-    try {
-      setLoading(true);
-      const res = await api.get("/reports");
-      setRows(res.data || []);
-    } catch (err) {
-      console.error("LOAD REPORTS ERROR:", err);
-      alert("Failed to load reports");
-    } finally {
-      setLoading(false);
-    }
+    const res = await api.get("/reports");
+    setRows(res.data || []);
+    setSelectedRows([]);
+    setActions({});
+    setContacts({});
+    setApproved(false);
   }
 
   /* =====================================================
-     EXPORT CSV (JWT SAFE)
+     SELECTION (SAFE – OBJECT BASED)
   ===================================================== */
-  async function handleExportCSV() {
-    try {
-      setExporting(true);
+  function toggleRow(row) {
+    if (approved) return;
 
-      const response = await api.get("/reports/export/csv", {
-        responseType: "blob"
-      });
+    setSelectedRows((prev) => {
+      const exists = prev.includes(row);
+      return exists
+        ? prev.filter((r) => r !== row)
+        : [...prev, row];
+    });
+  }
 
-      const blob = new Blob([response.data], {
-        type: "text/csv;charset=utf-8;"
-      });
+  function isSelected(row) {
+    return selectedRows.includes(row);
+  }
 
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-
-      link.href = url;
-      link.download = "CBE_ATM_Report.csv";
-      document.body.appendChild(link);
-      link.click();
-
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-    } catch (err) {
-      console.error("CSV EXPORT ERROR:", err);
-      alert("Failed to download CSV");
-    } finally {
-      setExporting(false);
+  /* =====================================================
+     APPROVE SELECTED
+  ===================================================== */
+  function approveSelected() {
+    if (!supervisor.trim()) {
+      alert("Supervisor name is required");
+      return;
     }
+    if (!supervisorComment.trim()) {
+      alert("Supervisor comment is required");
+      return;
+    }
+    if (selectedRows.length === 0) {
+      alert("Select at least one ATM incident");
+      return;
+    }
+
+    setApproved(true);
+    alert(`Approved ${selectedRows.length} incident(s)`);
+  }
+
+  /* =====================================================
+     EXPORT ONE CONSOLIDATED PDF (ALL SELECTED)
+  ===================================================== */
+  function exportPDF() {
+    if (!approved) {
+      alert("Approve selected incidents first");
+      return;
+    }
+
+    if (selectedRows.length === 0) {
+      alert("No rows selected");
+      return;
+    }
+
+    const doc = new jsPDF();
+    const now = new Date().toLocaleString();
+
+    // Header
+    doc.setFontSize(14);
+    doc.text("ATM DAILY INCIDENT REPORT", 14, 15);
+
+    doc.setFontSize(10);
+    doc.text(`Supervisor: ${supervisor}`, 14, 22);
+    doc.text(`Date: ${now}`, 14, 27);
+    doc.text(`Supervisor Comment: ${supervisorComment}`, 14, 32);
+
+    autoTable(doc, {
+      startY: 38,
+      head: [[
+        "S.N",
+        "TID",
+        "ATM Name",
+        "Branch",
+        "Contacted Person",
+        "ATM Status",
+        "Problem",
+        "Action Taken"
+      ]],
+      body: selectedRows.map((r, i) => [
+        i + 1,
+        r.atm_id,
+        r.atm_name || "-",
+        r.branch_name,
+        contacts[r.atm_id] || "-",
+        r.atm_status,
+        r.reason_for_downtime,
+        actions[r.atm_id] || "-"
+      ]),
+      styles: { fontSize: 9 },
+      theme: "grid"
+    });
+
+    doc.save("ATM_Daily_Incident_Report.pdf");
   }
 
   /* =====================================================
@@ -77,77 +143,120 @@ export default function DailyReport() {
   return (
     <Container sx={{ mt: 4 }}>
       <Typography variant="h6" fontWeight={800} sx={{ mb: 2 }}>
-        Daily ATM Report
+        Daily ATM Incident Report (Bank Standard)
       </Typography>
 
-      {/* ACTION BUTTONS */}
-      <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
-        <Button
-          variant="outlined"
-          onClick={handleExportCSV}
-          disabled={exporting}
-        >
-          {exporting ? "Exporting..." : "Export CSV"}
-        </Button>
+      {/* SUPERVISOR PANEL */}
+      <Paper sx={{ p: 2, mb: 3 }}>
+        <Stack spacing={2}>
+          <TextField
+            label="Supervisor Name"
+            value={supervisor}
+            onChange={(e) => setSupervisor(e.target.value)}
+            disabled={approved}
+          />
 
-        <Button
-          variant="contained"
-          onClick={loadReports}
-          disabled={loading}
-        >
-          Refresh
-        </Button>
-      </Stack>
+          <TextField
+            label="Supervisor Comment"
+            multiline
+            minRows={2}
+            value={supervisorComment}
+            onChange={(e) => setSupervisorComment(e.target.value)}
+            disabled={approved}
+          />
 
-      {/* REPORT TABLE */}
+          <Stack direction="row" spacing={2}>
+            <Button
+              variant="contained"
+              onClick={approveSelected}
+              disabled={approved}
+            >
+              Approve Selected
+            </Button>
+
+            <Button
+              variant="outlined"
+              onClick={exportPDF}
+            >
+              Export PDF
+            </Button>
+
+            {approved && (
+              <Chip label="APPROVED" color="success" />
+            )}
+          </Stack>
+        </Stack>
+      </Paper>
+
+      {/* INCIDENT TABLE */}
       <Paper>
         <Table size="small">
           <TableHead>
             <TableRow>
+              <TableCell />
+              <TableCell><b>S.N</b></TableCell>
+              <TableCell><b>TID</b></TableCell>
+              <TableCell><b>ATM Name</b></TableCell>
               <TableCell><b>Branch</b></TableCell>
-              <TableCell><b>ATM ID</b></TableCell>
+              <TableCell><b>Contacted Person</b></TableCell>
               <TableCell><b>Status</b></TableCell>
-              <TableCell><b>Downtime Start</b></TableCell>
-              <TableCell><b>Downtime End</b></TableCell>
-              <TableCell><b>Duration (hrs)</b></TableCell>
-              <TableCell><b>Reason</b></TableCell>
-              <TableCell><b>Window</b></TableCell>
+              <TableCell><b>Problem</b></TableCell>
+              <TableCell><b>Action Taken</b></TableCell>
             </TableRow>
           </TableHead>
 
           <TableBody>
-            {loading && (
-              <TableRow>
-                <TableCell colSpan={8} align="center">
-                  Loading...
+            {rows.map((r, i) => (
+              <TableRow key={i}>
+                <TableCell>
+                  <Checkbox
+                    checked={isSelected(r)}
+                    onChange={() => toggleRow(r)}
+                    disabled={approved}
+                  />
+                </TableCell>
+
+                <TableCell>{i + 1}</TableCell>
+                <TableCell>{r.atm_id}</TableCell>
+                <TableCell>{r.atm_name || "-"}</TableCell>
+                <TableCell>{r.branch_name}</TableCell>
+
+                <TableCell>
+                  <TextField
+                    size="small"
+                    placeholder="Name"
+                    value={contacts[r.atm_id] || ""}
+                    onChange={(e) =>
+                      setContacts((p) => ({
+                        ...p,
+                        [r.atm_id]: e.target.value
+                      }))
+                    }
+                    disabled={approved}
+                  />
+                </TableCell>
+
+                <TableCell>{r.atm_status}</TableCell>
+                <TableCell>{r.reason_for_downtime}</TableCell>
+
+                <TableCell>
+                  <TextField
+                    size="small"
+                    multiline
+                    minRows={2}
+                    placeholder="Describe action taken"
+                    value={actions[r.atm_id] || ""}
+                    onChange={(e) =>
+                      setActions((p) => ({
+                        ...p,
+                        [r.atm_id]: e.target.value
+                      }))
+                    }
+                    disabled={approved}
+                  />
                 </TableCell>
               </TableRow>
-            )}
-
-            {!loading && rows.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={8} align="center">
-                  No records found
-                </TableCell>
-              </TableRow>
-            )}
-
-            {!loading &&
-              rows.map((row, i) => (
-                <TableRow key={i}>
-                  <TableCell>{row.branch_name}</TableCell>
-                  <TableCell>{row.atm_id}</TableCell>
-                  <TableCell>{row.atm_status}</TableCell>
-                  <TableCell>{row.downtime_start}</TableCell>
-                  <TableCell>{row.downtime_end}</TableCell>
-
-                  {/* ✅ CORRECT COLUMN NAME */}
-                  <TableCell>{row.downtime_duration_hours}</TableCell>
-
-                  <TableCell>{row.reason_for_downtime}</TableCell>
-                  <TableCell>{row.reporting_window}</TableCell>
-                </TableRow>
-              ))}
+            ))}
           </TableBody>
         </Table>
       </Paper>
